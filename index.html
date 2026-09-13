@@ -28,20 +28,15 @@
 	<body>
 		<div class="container">
 		<h1>CS184/284A Fall 2026 Homework 1 Write-Up</h1>
-		<div style="text-align: center;">Names: </div>
+		<div style="text-align: center;">Names: Kway Ler Koon</div>
 
 		<br>
 
-		Link to webpage: (TODO) <a href="https://cs184.eecs.berkeley.edu/fa26">cs184.eecs.berkeley.edu/fa26</a>
+		Link to webpage: <a href="https://cal-cs184-student.github.io/hw1-klk-writeup/">cal-cs184-student.github.io/hw1-klk-writeup</a>
 		
 		<br>
 
-		Link to GitHub repository: (TODO) <a href="https://cs184.eecs.berkeley.edu/fa26">cs184.eecs.berkeley.edu/fa26</a>
-
-		<figure>
-			<img src="assets/lion.jpg" alt="Lion" style="width:50%"/>
-			<figcaption>You can add images with captions!</figcaption>
-		</figure>
+		Link to GitHub repository: <a href="https://github.com/cal-cs184-student/hw1-klk">github.com/cal-cs184-student/hw1-klk</a>
 
 		<!--
 		We've already added one heading per task, to make your write-up as navigable when grading. Please fit your write-up within these sections!
@@ -51,34 +46,51 @@
 		Give a high-level overview of what you implemented in this homework. Think about what you've built as a whole. Share your thoughts on what interesting things you've learned from completing the homework.
 
 		<h2>Task 1: Drawing Single-Color Triangles</h2>
-		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
 
-		<p>Here is an example 2x2 gridlike structure using an HTML table. Each <b>tr</b> is a row and each <b>td</b> is a column in that row. You might find this useful for framing and showing your result images in an organized fashion.</p>
-		<div style="display: flex; flex-direction: column; align-items: center;">
-			<table style="width: 100%; text-align: center; border-collapse: collapse;">
-			  <tr>
-				<td style="text-align: center;">
-				  <img src="assets/lion.jpg" width="400px"/>
-				  <figcaption>Caption goes here.</figcaption>
-				</td>
-				<td style="text-align: center;">
-				  <img src="assets/lion.jpg" width="400px"/>
-				  <figcaption>Caption goes here.</figcaption>
-				</td>
-			  </tr>
-			  <tr>
-				<td style="text-align: center;">
-				  <img src="assets/lion.jpg" width="400px"/>
-				  <figcaption>Caption goes here.</figcaption>
-				</td>
-				<td style="text-align: center;">
-				  <img src="assets/lion.jpg" width="400px"/>
-				  <figcaption>Caption goes here.</figcaption>
-				</td>
-			  </tr>
-			</table>
-		</div>
-		
+		<h3>Algorithm</h3>
+		<p>
+		My triangle rasterizer decides, for each candidate pixel, whether the center of that pixel lies inside the triangle,
+		and fills it if so. Sample points sit at half-integer coordinates, so pixel \((x, y)\) is tested at \((x + 0.5,\ y + 0.5)\).
+		</p>
+		<p>
+		The inside test uses three <b>edge functions</b>. For an edge from vertex \(A\) to vertex \(B\) and a sample point \(P\),
+		\[ E_{AB}(P) = (P_x - A_x)(B_y - A_y) - (P_y - A_y)(B_x - A_x). \]
+		This is the 2D cross product of the edge direction with the vector from \(A\) to \(P\). It is zero when \(P\) is exactly on
+		the line through \(A\) and \(B\), and its sign tells which side of the line \(P\) is on. I evaluate the three edges going
+		around the triangle in order, \(P_0 \to P_1\), \(P_1 \to P_2\), \(P_2 \to P_0\). A sample is inside the triangle when all
+		three values have the same sign.
+		</p>
+		<p>
+		Two details fall out of this test. First, the SVG vertices may be listed clockwise or counter-clockwise, which flips the sign of
+		every edge function. Instead of reordering vertices, I accept a sample when the three values are either all \(\geq 0\) or all
+		\(\leq 0\), so both winding orders work with no extra work. Second, using non-strict comparisons means a sample that lies exactly
+		on an edge counts as inside, which is what the spec asks for.
+		</p>
+		<p>
+		Once a sample passes, I call <code>fill_pixel(x, y, color)</code> to write the color into the sample buffer. At the end of the frame,
+		<code>resolve_to_framebuffer()</code> converts the float colors in the sample buffer into the 8-bit RGB framebuffer.
+		</p>
+
+		<h3>Efficiency: only the bounding box is checked</h3>
+		<p>
+		Before looping, I compute the axis-aligned bounding box of the triangle from the min and max of the three x values and the three
+		y values. Both corners are floored to get inclusive integer pixel indices, and both are clamped to
+		\([0, \text{width}-1]\) and \([0, \text{height}-1]\) so triangles that hang off the screen never index outside the buffer.
+		The double loop then visits only pixels in that box, so the work is proportional to the area of the bounding box rather than the
+		area of the framebuffer. This is exactly the baseline the spec requires. The outer loop runs over rows and the inner loop over
+		columns, so writes into the sample buffer are sequential in memory.
+		</p>
+
+		<h3>Result</h3>
+		<figure>
+			<img src="assets/task1_test4_inspector.png" style="width:70%"/>
+			<figcaption>
+				<code>basic/test4.svg</code> at 1 sample per pixel, with the pixel inspector over the tip of the magenta sliver.
+				The triangle is narrower than a pixel there, so some pixel centers miss it and the sliver breaks up into disconnected
+				fragments. This is the aliasing that Task 2 addresses.
+			</figcaption>
+		</figure>
+
 		<h2>Task 2: Antialiasing by Supersampling</h2>
 		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
 
