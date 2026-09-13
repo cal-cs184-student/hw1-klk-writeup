@@ -88,6 +88,78 @@
 
 		<h2>Task 2: Antialiasing by Supersampling</h2>
 
+		<h3>Algorithm and data structures</h3>
+		<p>
+		Supersampling renders the scene at a higher resolution than the screen and then averages back down. Instead of testing one
+		point per pixel, I test an \(n \times n\) grid of points inside every pixel, where \(n = \sqrt{\text{sample\_rate}}\), and
+		keep every result. At the end of the frame, each pixel's final color is the mean of its samples. A pixel that is fully inside
+		a triangle averages to the triangle color, a pixel fully outside stays the background color, and a pixel on the edge blends
+		the two in proportion to how many of its samples the triangle covered.
+		</p>
+		<p>
+		The only data structure is <code>sample_buffer</code>, a <code>std::vector&lt;Color&gt;</code> of floating-point colors
+		that holds every sample for every pixel. Its size is <code>width * height * sample_rate</code>. I store all of a pixel's samples
+		contiguously, so sample \(s\) of pixel \((x, y)\) lives at index
+		\[ (y \cdot \text{width} + x) \cdot \text{sample\_rate} + s, \qquad s = j \cdot n + i, \]
+		where \(i\) and \(j\) are the sub-column and sub-row inside the pixel. Keeping a pixel's samples adjacent makes the averaging
+		step a short loop over consecutive memory.
+		</p>
+
+		<h3>Why supersampling helps</h3>
+		<p>
+		With one sample per pixel, a pixel is either entirely inside or entirely outside a triangle, so edges are stair-stepped and any
+		feature thinner than a pixel can be missed entirely. Supersampling approximates the true area coverage of each pixel, which is
+		the same as applying a box filter to the high-resolution image before downsampling. Edges become smooth gradients instead of
+		hard steps, and thin features leave a faint trace in every pixel they touch instead of vanishing when they slip between sample
+		points.
+		</p>
+
+		<h3>Changes to the rasterization pipeline</h3>
+		<ul>
+			<li><b><code>set_sample_rate</code> and <code>set_framebuffer_target</code></b> now resize <code>sample_buffer</code> to
+			<code>width * height * sample_rate</code>. Both must do this because either can be called after the other.</li>
+			<li><b><code>rasterize_triangle</code></b> gained two inner loops over \(i, j \in [0, n)\). The sample position is
+			\((x + \frac{i + 0.5}{n},\ y + \frac{j + 0.5}{n})\), the three edge tests from Task 1 run unchanged on that point, and a hit
+			writes the color directly into the sample's slot in <code>sample_buffer</code>. At \(n = 1\) this reduces exactly to Task 1.</li>
+			<li><b><code>fill_pixel</code></b>, used by points and lines, now writes the same color into all <code>sample_rate</code>
+			slots of the pixel. Without this the black canvas border, which is drawn with <code>rasterize_line</code>, would be averaged
+			against white samples and turn gray.</li>
+			<li><b><code>resolve_to_framebuffer</code></b> sums each pixel's samples, multiplies by
+			<code>1 / sample_rate</code>, then converts each channel from a float in \([0, 1]\) to an 8-bit value in
+			<code>rgb_framebuffer_target</code>.</li>
+		</ul>
+		<p>
+		<code>clear_buffers</code> did not need to change since it already fills the whole vector.
+		</p>
+
+		<h3>Results</h3>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center;">
+				  <img src="assets/task2_test4_rate1.png" width="100%"/>
+				  <figcaption>Sample rate 1</figcaption>
+				</td>
+				<td style="text-align: center;">
+				  <img src="assets/task2_test4_rate4.png" width="100%"/>
+				  <figcaption>Sample rate 4</figcaption>
+				</td>
+				<td style="text-align: center;">
+				  <img src="assets/task2_test4_rate16.png" width="100%"/>
+				  <figcaption>Sample rate 16</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+		<p>
+		The pixel inspector is over the same spot on the magenta sliver in all three. At rate 1 every pixel is either full magenta or
+		white, and the sliver breaks into disconnected fragments where it is thinner than a pixel and no pixel center lands inside it.
+		At rate 4 each pixel has four chances to hit the triangle, so the gaps close and the edge pixels take on intermediate pinks
+		depending on whether one, two, or three of their samples were covered. At rate 16 the sliver is continuous and its edges fade
+		smoothly from magenta through several shades of pink to white, because each pixel's color now tracks the fraction of its area the
+		triangle actually covers.
+		</p>
+
 		<h2>Task 3: Transforms</h2>
 
 		<h2>Task 4: Barycentric coordinates</h2>
