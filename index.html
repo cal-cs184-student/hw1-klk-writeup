@@ -162,6 +162,49 @@
 
 		<h2>Task 3: Transforms</h2>
 
+		<h3>Implementation</h3>
+		<p>
+		The three transforms are \(3 \times 3\) matrices that act on points written in homogeneous coordinates \((x, y, 1)\). The
+		extra coordinate is what lets a matrix multiply express translation, which a plain \(2 \times 2\) matrix cannot do since it
+		always maps the origin to itself. The starter code's <code>operator*</code> lifts each <code>Vector2D</code> to
+		\((x, y, 1)\), multiplies, and divides by the third component to come back to 2D.
+		</p>
+		\[
+		T(d_x, d_y) = \begin{bmatrix} 1 & 0 & d_x \\ 0 & 1 & d_y \\ 0 & 0 & 1 \end{bmatrix}, \qquad
+		S(s_x, s_y) = \begin{bmatrix} s_x & 0 & 0 \\ 0 & s_y & 0 \\ 0 & 0 & 1 \end{bmatrix}, \qquad
+		R(\theta) = \begin{bmatrix} \cos\theta & -\sin\theta & 0 \\ \sin\theta & \cos\theta & 0 \\ 0 & 0 & 1 \end{bmatrix}
+		\]
+		<p>
+		<code>rotate</code> receives degrees, so it converts to radians before calling <code>cos</code> and <code>sin</code>. The
+		rotation is counter-clockwise in the usual mathematical convention. Because screen and SVG coordinates have \(y\) pointing
+		down, a positive angle appears clockwise on screen, which matches the SVG spec.
+		</p>
+		<p>
+		Nested <code>&lt;g transform="..."&gt;</code> groups compose by multiplying their matrices outer to inner, so the transform
+		listed last in the nesting is applied to the geometry first. With these three functions in place,
+		<code>svg/transforms/robot.svg</code> renders identically to the reference image.
+		</p>
+
+		<h3>My robot: a wave</h3>
+		<p>
+		I posed cubeman waving with his right arm. The original arms are rectangles centered on their own midpoints, so rotating
+		them in place would spin each segment about its middle rather than about a joint. To get a proper joint, each segment uses the
+		pattern <i>translate to the pivot, rotate, then translate the segment outward along the rotated axis</i>. The upper arm is
+		wrapped in <code>translate(50 -40)</code> to reach the shoulder, then <code>rotate(-60)</code> to swing it up, then
+		<code>translate(40 0)</code> so the rectangle extends away from the shoulder instead of straddling it. The forearm sits inside
+		that same rotated frame: it moves out to the elbow with <code>translate(90 0)</code>, bends a further
+		<code>rotate(-50)</code>, and is pushed out with <code>translate(35 0)</code>. Because the elbow group is nested inside the
+		shoulder group, changing only the shoulder angle moves the whole arm as a unit, which is what makes the hierarchy useful for
+		animation. Sweeping the shoulder angle back and forth over time would produce a waving motion.
+		</p>
+		<figure>
+			<img src="assets/task3_my_robot.png" style="width:60%"/>
+			<figcaption>
+				<code>my_robot.svg</code> rendered at 16 samples per pixel. The right arm pivots at the shoulder and bends at the elbow.
+				The SVG file is <a href="my_robot.svg">here</a>.
+			</figcaption>
+		</figure>
+
 		<h2>Task 4: Barycentric coordinates</h2>
 
 		<h2>Task 5: "Pixel sampling" for texture mapping</h2>
