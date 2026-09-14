@@ -207,6 +207,51 @@
 
 		<h2>Task 4: Barycentric coordinates</h2>
 
+		<h3>What barycentric coordinates are</h3>
+		<p>
+		Barycentric coordinates describe a point \(P\) inside a triangle as a weighted average of the three vertices:
+		\[ P = \alpha P_0 + \beta P_1 + \gamma P_2, \qquad \alpha + \beta + \gamma = 1. \]
+		Each weight measures how close \(P\) is to one vertex. At \(P_0\) the coordinates are \((1, 0, 0)\), at the midpoint of the
+		edge \(P_1 P_2\) they are \((0, \tfrac12, \tfrac12)\), and at the centroid they are \((\tfrac13, \tfrac13, \tfrac13)\). Inside the
+		triangle all three weights lie in \([0, 1]\), and a point is outside exactly when one of them goes negative. Geometrically,
+		\(\alpha\) is the area of the sub-triangle \(P P_1 P_2\) divided by the area of the whole triangle, and similarly for the others.
+		</p>
+		<p>
+		The reason they matter is that once you have \((\alpha, \beta, \gamma)\) for a sample, you can interpolate <i>any</i>
+		per-vertex quantity with the same weights. For colors,
+		\[ C(P) = \alpha C_0 + \beta C_1 + \gamma C_2. \]
+		The triangle below has a red, a green, and a blue vertex. Every interior pixel is the blend given by its barycentric weights,
+		so the color shifts smoothly from pure red at the top toward green and blue at the bottom corners, and the center is a muddy
+		mix of all three.
+		</p>
+		<figure>
+			<img src="assets/task4_rgb_triangle.png" style="width:45%"/>
+			<figcaption>A single triangle with red, green, and blue vertex colors, interpolated with barycentric coordinates.</figcaption>
+		</figure>
+
+		<h3>Implementation</h3>
+		<p>
+		The three edge functions from Task 1 are already proportional to the barycentric coordinates. The edge function for edge
+		\(P_1 P_2\) is zero along that edge and grows linearly toward \(P_0\), which is exactly the behavior of \(\alpha\). So inside
+		the sampling loop, for each sample that passes the inside test I compute
+		\[ \alpha = \frac{E_{12}}{E_{01} + E_{12} + E_{20}}, \qquad \beta = \frac{E_{20}}{E_{01} + E_{12} + E_{20}}, \qquad
+		\gamma = \frac{E_{01}}{E_{01} + E_{12} + E_{20}}, \]
+		where each weight uses the edge <i>opposite</i> its vertex. The denominator is twice the signed area of the triangle. Because
+		the numerator and denominator flip sign together for a clockwise triangle, the ratios are correct for either winding order.
+		The interpolated color \(\alpha C_0 + \beta C_1 + \gamma C_2\) is then written into the sample buffer at the same slot the
+		single-color rasterizer would have used, so supersampling from Task 2 works unchanged.
+		</p>
+
+		<h3>Result</h3>
+		<figure>
+			<img src="assets/task4_test7.png" style="width:60%"/>
+			<figcaption>
+				<code>svg/basic/test7.svg</code> with default settings at sample rate 1. The wheel is made of 96 thin triangles that
+				share a black center vertex, with rim vertices stepping around the hue circle. Interpolation across each wedge produces the
+				smooth gradient, and neighboring wedges agree along their shared edges so no seams are visible.
+			</figcaption>
+		</figure>
+
 		<h2>Task 5: "Pixel sampling" for texture mapping</h2>
 
 		<h2>Task 6: "Level Sampling" with mipmaps for texture mapping</h2>
