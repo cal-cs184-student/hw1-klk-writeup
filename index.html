@@ -254,6 +254,87 @@
 
 		<h2>Task 5: "Pixel sampling" for texture mapping</h2>
 
+		<h3>What pixel sampling is</h3>
+		<p>
+		A textured triangle stores a texture coordinate \((u, v) \in [0,1]^2\) at each vertex instead of a color. For every sample
+		inside the triangle I interpolate \((u, v)\) with the same barycentric weights as Task 4, which gives a continuous position in
+		the texture image. That position almost never lands exactly on a texel center, so "pixel sampling" is the rule for turning a
+		continuous texture position into one color. I implemented two rules, selected with the <code>P</code> key.
+		</p>
+		<p>
+		<b>Nearest</b> scales \(u\) by the texture width and \(v\) by the height, floors both to get the texel that contains the
+		point, clamps the indices to the image, and returns that texel unchanged. It is one memory read per sample.
+		</p>
+		<p>
+		<b>Bilinear</b> treats texel centers as sitting at half-integer positions, so it subtracts 0.5 from the scaled coordinates,
+		floors to find the top-left texel of the surrounding \(2 \times 2\) block, and keeps the fractional parts \(s\) and \(t\) as
+		blend weights. It reads the four neighboring texels, linearly interpolates the top pair and the bottom pair by \(s\), then
+		interpolates those two results by \(t\). Four reads and three lerps per sample.
+		</p>
+
+		<h3>Implementation</h3>
+		<p>
+		<code>sample_nearest</code> and <code>sample_bilinear</code> live in <code>texture.cpp</code> and operate on a given
+		<code>MipLevel</code> via its <code>get_texel</code> helper. Both clamp every texel index into the valid range so that
+		\(u = 1\) or slight barycentric drift outside \([0,1]\) cannot read past the end of the texel array.
+		<code>rasterize_textured_triangle</code> reuses the supersampled loop from Task 2, interpolates \(u\) and \(v\), fills a
+		<code>SampleParams</code> struct with the coordinate and the current pixel and level sampling modes, and calls
+		<code>Texture::sample</code>, which for this task dispatches to the chosen sampler at mip level 0.
+		</p>
+
+		<h3>Results</h3>
+		<p>
+		All four images are <code>svg/texmap/test5.svg</code>, the Berkeley seal warped through a spiral. The seal texture is only
+		260 x 260 texels stretched across the canvas, so texels are magnified on screen and the sampling method is easy to see. The
+		pixel inspector is over the same white letter edge in every shot.
+		</p>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center;">
+				  <img src="assets/task5_nearest_rate1.png" width="100%"/>
+				  <figcaption>Nearest, 1 sample per pixel</figcaption>
+				</td>
+				<td style="text-align: center;">
+				  <img src="assets/task5_nearest_rate16.png" width="100%"/>
+				  <figcaption>Nearest, 16 samples per pixel</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center;">
+				  <img src="assets/task5_bilinear_rate1.png" width="100%"/>
+				  <figcaption>Bilinear, 1 sample per pixel</figcaption>
+				</td>
+				<td style="text-align: center;">
+				  <img src="assets/task5_bilinear_rate16.png" width="100%"/>
+				  <figcaption>Bilinear, 16 samples per pixel</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+		<p>
+		With nearest sampling at 1 sample per pixel, the edge of the letter is a hard staircase: each screen pixel copies exactly one
+		texel, so the magnified texel grid is visible and the boundary jumps between pure white and pure blue. Supersampling to 16
+		softens the staircase by averaging screen samples that straddle a texel boundary, but the underlying blocks are still there
+		because every one of those 16 samples is itself a hard nearest lookup. Bilinear at 1 sample per pixel already looks smoother
+		than nearest at 16, because the blend happens in texture space: each pixel is a weighted mix of the four texels around it, so
+		the transition across the letter edge is a gradient several pixels wide instead of a step. Bilinear at 16 is the smoothest of
+		the four, though the improvement over bilinear at 1 is small here.
+		</p>
+
+		<h3>When the difference is large</h3>
+		<p>
+		Bilinear beats nearest most clearly when the texture is <i>magnified</i>, that is, when one texel covers many screen pixels.
+		Nearest then paints each texel as a flat block and the image looks pixelated, while bilinear reconstructs a smooth surface
+		between texel centers. It also helps when the texture is slowly moving or rotating relative to the pixel grid, since nearest
+		lookups snap and shimmer as the boundary between two texels crosses pixel centers, whereas bilinear changes continuously.
+		The two methods look nearly identical when the texture is displayed close to its native resolution, and neither fixes the
+		opposite problem of <i>minification</i>, where many texels fall inside one pixel. Both only look at one or four texels per
+		sample, so a minified high-frequency texture still aliases. That case is what mipmapping in Task 6 addresses. The cost of
+		bilinear is four texel reads and three interpolations instead of one read, which is a noticeable but not dominant slowdown on
+		a software rasterizer.
+		</p>
+
 		<h2>Task 6: "Level Sampling" with mipmaps for texture mapping</h2>
 
 		<h2>(Optional) Task 7: Extra Credit - Draw Something Creative!</h2>
