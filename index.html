@@ -39,6 +39,26 @@
 		Link to GitHub repository: <a href="https://github.com/cal-cs184-student/hw1-klk">github.com/cal-cs184-student/hw1-klk</a>
 
 		<h2>Overview</h2>
+		<p>
+		In this homework I built a software rasterizer that renders a simplified subset of SVG. It starts from the most basic
+		operation, deciding which pixels a single-color triangle covers using three edge functions over the triangle's bounding box,
+		and builds up from there. Supersampling stores an \(n \times n\) grid of samples per pixel in a larger sample buffer and averages
+		them down at the end of the frame, which turns hard stair-stepped edges into smooth ones and keeps sub-pixel slivers from
+		breaking apart. Translate, scale, and rotate matrices in homogeneous coordinates let nested SVG groups compose into a posable
+		figure. Barycentric coordinates, which fall straight out of the edge functions, interpolate per-vertex colors and then
+		per-vertex texture coordinates across a triangle. Finally, texture mapping samples an image with nearest or bilinear pixel
+		filtering, and mipmap level sampling picks the right resolution of the texture from the screen-space rate of change of
+		\((u, v)\), which removes the moiré that appears when a detailed texture is minified.
+		</p>
+		<p>
+		The thing I found most interesting is how much of the pipeline reuses one idea. The edge function that answers "is this sample
+		inside?" also gives the barycentric weights, and those same weights interpolate colors, texture coordinates, and even the
+		coordinates at neighboring pixels that determine the mip level. I also came away with a much more concrete feel for aliasing.
+		Supersampling, bilinear filtering, and mipmapping all look like different tricks, but each one is a way of averaging over the
+		area a pixel really covers instead of trusting a single point: supersampling does it in screen space, bilinear does it for
+		magnified textures, and mipmaps precompute it for minified ones. Seeing the single-texel checkerboard collapse from swirling
+		moiré to flat gray when level sampling was switched on made that click.
+		</p>
 
 		<h2>Task 1: Drawing Single-Color Triangles</h2>
 
@@ -336,6 +356,106 @@
 		</p>
 
 		<h2>Task 6: "Level Sampling" with mipmaps for texture mapping</h2>
+
+		<h3>What level sampling is</h3>
+		<p>
+		Pixel sampling from Task 5 reads at most four texels per sample no matter how large the texture is. When a texture is
+		<i>minified</i>, meaning many texels project into a single screen pixel, those four texels are an arbitrary subset of what the
+		pixel actually covers, so the result sparkles and forms moiré patterns. A mipmap fixes this by precomputing a pyramid of
+		downsampled copies of the texture: level 0 is full resolution, level 1 is half the size in each dimension, level 2 a quarter,
+		and so on, each one a box-filtered version of the one before. Level sampling is the rule for choosing which level to read from,
+		so that one texel at the chosen level covers roughly one screen pixel. The <code>L</code> key cycles the three modes.
+		</p>
+		<p>
+		The right level depends on how fast the texture coordinate changes across the screen. If stepping one pixel to the right moves
+		\((u, v)\) by \(2^k\) texels, then level \(k\) is the one whose texels have been pre-averaged over that footprint. So
+		\[ D = \log_2 \max\!\left( \left\| \frac{\partial (u,v)}{\partial x} \right\|,\ \left\| \frac{\partial (u,v)}{\partial y} \right\| \right), \]
+		with the derivatives measured in texels, that is, scaled by the full-resolution texture width and height. \(D\) is a continuous
+		number and can be negative when the texture is magnified; negative values clamp to level 0 since there is nothing finer.
+		</p>
+
+		<h3>Implementation</h3>
+		<p>
+		In <code>rasterize_textured_triangle</code>, for each covered sample I compute barycentric coordinates not only at the sample
+		point but also at the points one full pixel to the right and one full pixel down, interpolate \((u, v)\) at all three, and
+		store them in the <code>SampleParams</code> fields <code>p_uv</code>, <code>p_dx_uv</code>, and <code>p_dy_uv</code>. The
+		neighbor points are not tested for triangle coverage, since only the rate of change matters.
+		</p>
+		<p>
+		<code>Texture::get_level</code> subtracts <code>p_uv</code> from each neighbor to get the two difference vectors, scales their
+		\(x\) components by the texture width and \(y\) components by the height, takes the larger of the two lengths, and returns its
+		\(\log_2\), or 0 if that would be negative or undefined.
+		</p>
+		<p>
+		<code>Texture::sample</code> then branches on the level mode. <b>L_ZERO</b> always uses level 0, as in Task 5.
+		<b>L_NEAREST</b> rounds \(D\) to the nearest integer, clamps it to the valid range of mip levels, and passes it to the
+		pixel sampler chosen by <code>psm</code>. <b>L_LINEAR</b> clamps \(D\) as a float, floors it to get the lower level, takes the
+		next level up as the upper, samples both with the chosen pixel sampler, and blends them by the fractional part of \(D\). With
+		<code>P_LINEAR</code> this is trilinear filtering. The pixel and level choices are independent, so all six combinations work.
+		</p>
+
+		<h3>Tradeoffs</h3>
+		<ul>
+			<li><b>Speed.</b> Per sample, nearest pixel costs 1 texel read and bilinear costs 4. Level sampling adds the
+			<code>get_level</code> computation, which is two extra barycentric evaluations and a logarithm, plus nothing more for
+			L_NEAREST but a second full pixel sample for L_LINEAR. Trilinear is therefore 8 reads and 7 lerps per sample, roughly
+			8 times the memory traffic of the cheapest option. In practice the mip levels are small and cache well, so minified textures
+			can actually render <i>faster</i> with mipmapping than without, because level 0 reads scattered across a large image are
+			replaced by reads that stay within a small one.</li>
+			<li><b>Memory.</b> A mipmap stores the full texture plus levels of \(\tfrac14, \tfrac1{16}, \ldots\) of its size, which
+			sums to \(\tfrac43\) of the original. The extra third is paid once at load time, not per frame.</li>
+			<li><b>Antialiasing power.</b> Pixel sampling only helps with magnification. Supersampling helps with everything but at
+			\(N\) times the cost for \(N\) samples. Level sampling targets minification directly: by reading a level whose texels already
+			average the pixel's footprint, one sample at the right level does what many supersamples would do, for close to constant
+			cost. L_NEAREST can show a visible seam where the rounded level changes; L_LINEAR blends across that boundary at the cost
+			of the second sample.</li>
+		</ul>
+
+		<h3>Results</h3>
+		<p>
+		To make the effect obvious I generated a 1024 x 1024 test texture, <code>img/pattern.png</code>, whose left half is a
+		checkerboard of single texels with a coarse red grid every 128 texels, and whose right half is a set of concentric rings and
+		radial spokes with a two-texel period. It is mapped through the same warped mesh as <code>texmap/test6.svg</code>. At the
+		default view the texture is minified by roughly two to four times over most of the surface, and magnified in a small region
+		near the lower left. All four images are at 1 sample per pixel so that only the texture filtering changes.
+		</p>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center;">
+				  <img src="assets/task6_lzero_pnearest.png" width="100%"/>
+				  <figcaption>L_ZERO, P_NEAREST</figcaption>
+				</td>
+				<td style="text-align: center;">
+				  <img src="assets/task6_lzero_plinear.png" width="100%"/>
+				  <figcaption>L_ZERO, P_LINEAR</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center;">
+				  <img src="assets/task6_lnearest_pnearest.png" width="100%"/>
+				  <figcaption>L_NEAREST, P_NEAREST</figcaption>
+				</td>
+				<td style="text-align: center;">
+				  <img src="assets/task6_lnearest_plinear.png" width="100%"/>
+				  <figcaption>L_NEAREST, P_LINEAR</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+		<p>
+		At level zero the single-texel checkerboard is far above the pixel sampling rate, so both pixel modes produce swirling moiré:
+		nearest picks essentially random texels and bilinear only averages four of the many texels under each pixel, which is not
+		enough. Switching to nearest level selects mip level 1 or 2 across most of the surface, where the checkerboard has already been
+		box-filtered to a uniform gray. The moiré vanishes and the red grid, which is wide enough to survive several levels of
+		downsampling, stays sharp. In the L_NEAREST, P_NEAREST image a patch in the lower left remains noisy. That is the one region
+		where the mesh magnifies the texture, so \(D\) rounds to 0 and level 0 is correctly chosen, and a nearest lookup into a
+		single-texel checkerboard is still hit-or-miss. In the L_NEAREST, P_LINEAR image the same patch is smooth, because bilinear
+		filtering handles the magnified case that mipmapping does not. The two techniques are complementary: level sampling fixes
+		minification, pixel sampling fixes magnification, and only the combination is clean everywhere. Bilinear alone at level zero,
+		in the top right image, softens the moiré but leaves large ring-shaped artifacts, since four texels are still far fewer than
+		the pixel's true footprint.
+		</p>
 
 		<h2>(Optional) Task 7: Extra Credit - Draw Something Creative!</h2>
 
