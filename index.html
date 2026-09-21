@@ -226,7 +226,7 @@
 		Barycentric coordinates describe a point \(P\) inside a triangle as a weighted average of the 3 vertices:
 		\[ P = \alpha P_0 + \beta P_1 + \gamma P_2, \qquad \alpha + \beta + \gamma = 1. \]
 		Each weight measures how close \(P\) is to one vertex. At \(P_0\) the coordinates are \((1, 0, 0)\), at the midpoint of
-		edge \(P_1 P_2\) they are \((0, \tfrac12, \tfrac12)\), and at the center they are \((\tfrac13, \tfrac13, \tfrac13)\). Inside the
+		edge \(P_1 P_2\) they are \((0, \frac{1}{2}, \frac{1}{2})\), and at the center they are \((\frac{1}{3}, \frac{1}{3}, \frac{1}{3})\). Inside the
 		triangle all 3 weights are in \([0, 1]\), and a point is outside when one of them goes negative. Geometrically,
 		\(\alpha\) is the area of the small triangle \(P P_1 P_2\) divided by the area of the whole triangle, and the same goes for
 		the others.
@@ -396,8 +396,8 @@
 			L_LINEAR needs a second full pixel sample. So trilinear is 8 reads and 7 lerps per sample, about 8 times the memory reads
 			of the cheapest option. In practice the mip levels are small and cache well, so minified textures can actually render faster
 			with mipmapping, because scattered reads across a big level 0 image are replaced by reads that stay inside a small one.</li>
-			<li><b>Memory.</b> A mipmap stores the full texture plus levels that are \(\tfrac14, \tfrac1{16}, \ldots\) of its size,
-			which adds up to \(\tfrac43\) of the original. The extra third is paid once at load time, not every frame.</li>
+			<li><b>Memory.</b> A mipmap stores the full texture plus levels that are \(\frac{1}{4}, \frac{1}{16}, \ldots\) of its size,
+			which adds up to \(\frac{4}{3}\) of the original. The extra third is paid once at load time, not every frame.</li>
 			<li><b>Antialiasing power.</b> Pixel sampling only helps with magnification. Supersampling helps with everything, but costs
 			\(N\) times more for \(N\) samples. Level sampling goes after minification directly. By reading a level whose texels already
 			average the area of the pixel, 1 sample at the right level does what many supersamples would do, for almost constant cost.
