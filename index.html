@@ -40,60 +40,58 @@
 
 		<h2>Overview</h2>
 		<p>
-		In this homework I built a software rasterizer that renders a simplified subset of SVG. It starts from the most basic
-		operation, deciding which pixels a single-color triangle covers using three edge functions over the triangle's bounding box,
-		and builds up from there. Supersampling stores an \(n \times n\) grid of samples per pixel in a larger sample buffer and averages
-		them down at the end of the frame, which turns hard stair-stepped edges into smooth ones and keeps sub-pixel slivers from
-		breaking apart. Translate, scale, and rotate matrices in homogeneous coordinates let nested SVG groups compose into a posable
-		figure. Barycentric coordinates, which fall straight out of the edge functions, interpolate per-vertex colors and then
-		per-vertex texture coordinates across a triangle. Finally, texture mapping samples an image with nearest or bilinear pixel
-		filtering, and mipmap level sampling picks the right resolution of the texture from the screen-space rate of change of
-		\((u, v)\), which removes the moiré that appears when a detailed texture is minified.
+		In this homework I built a software rasterizer that renders a simplified version of SVG files. It starts with the most
+		basic step, which is deciding which pixels a single-color triangle covers. I do this with 3 edge functions over the
+		triangle's bounding box. From there I added supersampling, which stores an \(n \times n\) grid of samples per pixel in a bigger
+		sample buffer and averages them down at the end of the frame. This turns stair-stepped edges into smooth ones and stops thin
+		slivers from breaking apart. Translate, scale, and rotate matrices in homogeneous coordinates let nested SVG groups combine into
+		a figure I can pose. Barycentric coordinates come straight from the edge functions, and I use them to interpolate vertex colors
+		and then texture coordinates across a triangle. Finally, texture mapping samples an image with nearest or bilinear pixel
+		sampling, and mipmap level sampling picks the right resolution of the texture based on how fast \((u, v)\) changes across the
+		screen. This removes the moiré patterns that show up when a detailed texture is shrunk down.
 		</p>
 		<p>
-		The thing I found most interesting is how much of the pipeline reuses one idea. The edge function that answers "is this sample
-		inside?" also gives the barycentric weights, and those same weights interpolate colors, texture coordinates, and even the
-		coordinates at neighboring pixels that determine the mip level. I also came away with a much more concrete feel for aliasing.
-		Supersampling, bilinear filtering, and mipmapping all look like different tricks, but each one is a way of averaging over the
-		area a pixel really covers instead of trusting a single point: supersampling does it in screen space, bilinear does it for
-		magnified textures, and mipmaps precompute it for minified ones. Seeing the single-texel checkerboard collapse from swirling
-		moiré to flat gray when level sampling was switched on made that click.
-		</p>
+		The most interesting thing to me is how much of the pipeline reuses one idea. The edge function that answers "is this sample
+		inside?" also gives the barycentric weights. Those same weights interpolate colors, texture coordinates, and even the
+		coordinates at neighboring pixels that decide the mip level. I also got a much better feel for aliasing. Supersampling,
+		bilinear filtering, and mipmapping look like 3 different tricks, but each one is just a way of averaging over the area a pixel
+		really covers instead of trusting a single point. Supersampling does it in screen space, bilinear does it for magnified
+		textures, and mipmaps precompute it for minified ones.
+		</p> 
 
 		<h2>Task 1: Drawing Single-Color Triangles</h2>
 
 		<h3>Algorithm</h3>
 		<p>
-		My triangle rasterizer decides, for each candidate pixel, whether the center of that pixel lies inside the triangle,
-		and fills it if so. Sample points sit at half-integer coordinates, so pixel \((x, y)\) is tested at \((x + 0.5,\ y + 0.5)\).
+		For each candidate pixel, my rasterizer checks if the center of the pixel is inside the triangle, and fills it if it is.
+		Sample points sit at half-integer coordinates, so pixel \((x, y)\) is tested at \((x + 0.5,\ y + 0.5)\).
 		</p>
 		<p>
-		The inside test uses three <b>edge functions</b>. For an edge from vertex \(A\) to vertex \(B\) and a sample point \(P\),
+		The inside test uses 3 <b>edge functions</b>. For an edge from vertex \(A\) to vertex \(B\) and a sample point \(P\),
 		\[ E_{AB}(P) = (P_x - A_x)(B_y - A_y) - (P_y - A_y)(B_x - A_x). \]
-		This is the 2D cross product of the edge direction with the vector from \(A\) to \(P\). It is zero when \(P\) is exactly on
-		the line through \(A\) and \(B\), and its sign tells which side of the line \(P\) is on. I evaluate the three edges going
+		This is the 2D cross product of the edge direction and the vector from \(A\) to \(P\). It is 0 when \(P\) is exactly on
+		the line through \(A\) and \(B\), and its sign tells me which side of the line \(P\) is on. I evaluate the 3 edges going
 		around the triangle in order, \(P_0 \to P_1\), \(P_1 \to P_2\), \(P_2 \to P_0\). A sample is inside the triangle when all
-		three values have the same sign.
+		3 values have the same sign.
 		</p>
 		<p>
-		Two details fall out of this test. First, the SVG vertices may be listed clockwise or counter-clockwise, which flips the sign of
-		every edge function. Instead of reordering vertices, I accept a sample when the three values are either all \(\geq 0\) or all
-		\(\leq 0\), so both winding orders work with no extra work. Second, using non-strict comparisons means a sample that lies exactly
+		There are 2 details to handle. First, the SVG vertices can be listed clockwise or counter-clockwise, which flips the sign of
+		every edge function. Instead of reordering the vertices, I accept a sample when the 3 values are either all \(\geq 0\) or all
+		\(\leq 0\), so both winding orders work. Second, using \(\geq\) and \(\leq\) instead of \(&gt;\) and \(&lt;\) means a sample exactly
 		on an edge counts as inside, which is what the spec asks for.
 		</p>
 		<p>
-		Once a sample passes, I call <code>fill_pixel(x, y, color)</code> to write the color into the sample buffer. At the end of the frame,
-		<code>resolve_to_framebuffer()</code> converts the float colors in the sample buffer into the 8-bit RGB framebuffer.
+		When a sample passes, I call <code>fill_pixel(x, y, color)</code> to write the color into the sample buffer. At the end of the
+		frame, <code>resolve_to_framebuffer()</code> converts the float colors in the sample buffer into the 8-bit RGB framebuffer.
 		</p>
 
 		<h3>Efficiency: only the bounding box is checked</h3>
 		<p>
-		Before looping, I compute the axis-aligned bounding box of the triangle from the min and max of the three x values and the three
-		y values. Both corners are floored to get inclusive integer pixel indices, and both are clamped to
-		\([0, \text{width}-1]\) and \([0, \text{height}-1]\) so triangles that hang off the screen never index outside the buffer.
-		The double loop then visits only pixels in that box, so the work is proportional to the area of the bounding box rather than the
-		area of the framebuffer. This is exactly the baseline the spec requires. The outer loop runs over rows and the inner loop over
-		columns, so writes into the sample buffer are sequential in memory.
+		Before looping, I find the bounding box of the triangle using the min and max of the 3 x values and the 3 y values. I floor
+		both corners to get integer pixel indices, then clamp them to \([0, \text{width}-1]\) and \([0, \text{height}-1]\) so
+		triangles that hang off the screen never index outside the buffer. The double loop only visits pixels inside that box, so the
+		work depends on the area of the bounding box instead of the whole framebuffer. This is the baseline the spec requires. The
+		outer loop goes over rows and the inner loop goes over columns, so writes into the sample buffer are sequential in memory.
 		</p>
 
 		<h3>Result</h3>
@@ -101,8 +99,8 @@
 			<img src="assets/task1_test4_inspector.png" style="width:70%"/>
 			<figcaption>
 				<code>basic/test4.svg</code> at 1 sample per pixel, with the pixel inspector over the tip of the magenta sliver.
-				The triangle is narrower than a pixel there, so some pixel centers miss it and the sliver breaks up into disconnected
-				fragments. This is the aliasing that Task 2 addresses.
+				The triangle is thinner than a pixel there, so some pixel centers miss it and the sliver breaks into separate
+				pieces. This is the aliasing that Task 2 fixes.
 			</figcaption>
 		</figure>
 
@@ -110,41 +108,40 @@
 
 		<h3>Algorithm and data structures</h3>
 		<p>
-		Supersampling renders the scene at a higher resolution than the screen and then averages back down. Instead of testing one
-		point per pixel, I test an \(n \times n\) grid of points inside every pixel, where \(n = \sqrt{\text{sample\_rate}}\), and
-		keep every result. At the end of the frame, each pixel's final color is the mean of its samples. A pixel that is fully inside
-		a triangle averages to the triangle color, a pixel fully outside stays the background color, and a pixel on the edge blends
-		the two in proportion to how many of its samples the triangle covered.
+		Supersampling renders the scene at a higher resolution then averages it back down. Instead of testing one point per pixel, I subdivide a pixel 
+		into an \(n \times n\) grid of points inside every pixel, where \(n = \sqrt{\text{sample\_rate}}\) and keep every result. At the end
+		of the frame, each pixel's final color is the mean of its samples. A pixel fully inside the triangle averages to the triangle color, a pixel
+		fully outside stays the background color, and a pixel on the edge blends both the background and the triangle color, directly proportional to 
+		the number of samples the triangle covered.
 		</p>
 		<p>
 		The only data structure is <code>sample_buffer</code>, a <code>std::vector&lt;Color&gt;</code> of floating-point colors
-		that holds every sample for every pixel. Its size is <code>width * height * sample_rate</code>. I store all of a pixel's samples
-		contiguously, so sample \(s\) of pixel \((x, y)\) lives at index
+		that holds every sample for every pixel. Its size is <code>width * height * sample_rate</code>. I store all of a pixel's
+		samples next to each other, so sample \(s\) of pixel \((x, y)\) is at index
 		\[ (y \cdot \text{width} + x) \cdot \text{sample\_rate} + s, \qquad s = j \cdot n + i, \]
-		where \(i\) and \(j\) are the sub-column and sub-row inside the pixel. Keeping a pixel's samples adjacent makes the averaging
+		where \(i\) and \(j\) are the sub-column and sub-row inside the pixel. Keeping a pixel's samples together makes the averaging
 		step a short loop over consecutive memory.
 		</p>
 
 		<h3>Why supersampling helps</h3>
 		<p>
-		With one sample per pixel, a pixel is either entirely inside or entirely outside a triangle, so edges are stair-stepped and any
-		feature thinner than a pixel can be missed entirely. Supersampling approximates the true area coverage of each pixel, which is
-		the same as applying a box filter to the high-resolution image before downsampling. Edges become smooth gradients instead of
-		hard steps, and thin features leave a faint trace in every pixel they touch instead of vanishing when they slip between sample
-		points.
+		With just one sample per pixel, a pixel is either inside or outside of the triangle, so the edges are stair-stepped and features
+		that are thinner than a pixel can be missed entirely. Supersampling approximates the true area coverage of each pixel, so edges become smooth 
+		gradients instead of hard steps and thin features leave a small trace in every pixel instead of just vanishing.
 		</p>
 
 		<h3>Changes to the rasterization pipeline</h3>
 		<ul>
 			<li><b><code>set_sample_rate</code> and <code>set_framebuffer_target</code></b> now resize <code>sample_buffer</code> to
-			<code>width * height * sample_rate</code>. Both must do this because either can be called after the other.</li>
-			<li><b><code>rasterize_triangle</code></b> gained two inner loops over \(i, j \in [0, n)\). The sample position is
-			\((x + \frac{i + 0.5}{n},\ y + \frac{j + 0.5}{n})\), the three edge tests from Task 1 run unchanged on that point, and a hit
-			writes the color directly into the sample's slot in <code>sample_buffer</code>. At \(n = 1\) this reduces exactly to Task 1.</li>
+			<code>width * height * sample_rate</code>. Both need to do this because either one can be called after the other.</li>
+			<li><b><code>rasterize_triangle</code></b> has 2 new inner loops over \(i, j \in [0, n)\). The sample position is
+			\((x + \frac{i + 0.5}{n},\ y + \frac{j + 0.5}{n})\). The 3 edge tests from Task 1 run on that point with no changes, and a
+			hit writes the color straight into that sample's slot in <code>sample_buffer</code>. At \(n = 1\) this is exactly the same
+			as Task 1.</li>
 			<li><b><code>fill_pixel</code></b>, used by points and lines, now writes the same color into all <code>sample_rate</code>
-			slots of the pixel. Without this the black canvas border, which is drawn with <code>rasterize_line</code>, would be averaged
-			against white samples and turn gray.</li>
-			<li><b><code>resolve_to_framebuffer</code></b> sums each pixel's samples, multiplies by
+			slots of the pixel. Without this, the black canvas border, which is drawn with <code>rasterize_line</code>, would get
+			averaged with white samples and turn gray.</li>
+			<li><b><code>resolve_to_framebuffer</code></b> adds up each pixel's samples, multiplies by
 			<code>1 / sample_rate</code>, then converts each channel from a float in \([0, 1]\) to an 8-bit value in
 			<code>rgb_framebuffer_target</code>.</li>
 		</ul>
@@ -172,22 +169,20 @@
 			</table>
 		</div>
 		<p>
-		The pixel inspector is over the same spot on the magenta sliver in all three. At rate 1 every pixel is either full magenta or
-		white, and the sliver breaks into disconnected fragments where it is thinner than a pixel and no pixel center lands inside it.
-		At rate 4 each pixel has four chances to hit the triangle, so the gaps close and the edge pixels take on intermediate pinks
-		depending on whether one, two, or three of their samples were covered. At rate 16 the sliver is continuous and its edges fade
-		smoothly from magenta through several shades of pink to white, because each pixel's color now tracks the fraction of its area the
-		triangle actually covers.
+		The pixel inspector is over the same spot on the magenta sliver in all 3. At rate 1 every pixel is either magenta or white, and the sliver breaks into stair-stepped edges. 
+		At rate 4, each pixel has 4 chances to hit the triangle, so the gap closes and the edge pixels take on a lighter shade of pink, due to the
+		averaging done in supersampling.
+		At rate 16 the sliver is continuous and the edges fade into a smooth gradient from magenta to pink to white.
 		</p>
 
 		<h2>Task 3: Transforms</h2>
 
 		<h3>Implementation</h3>
 		<p>
-		The three transforms are \(3 \times 3\) matrices that act on points written in homogeneous coordinates \((x, y, 1)\). The
-		extra coordinate is what lets a matrix multiply express translation, which a plain \(2 \times 2\) matrix cannot do since it
-		always maps the origin to itself. The starter code's <code>operator*</code> lifts each <code>Vector2D</code> to
-		\((x, y, 1)\), multiplies, and divides by the third component to come back to 2D.
+		The 3 transforms are \(3 \times 3\) matrices that act on points written in homogeneous coordinates \((x, y, 1)\). The
+		extra coordinate is what lets a matrix multiply do translation. A plain \(2 \times 2\) matrix cannot do this because it
+		always maps the origin to itself. The starter code's <code>operator*</code> turns each <code>Vector2D</code> into
+		\((x, y, 1)\), multiplies, then divides by the third component to get back to 2D.
 		</p>
 		\[
 		T(d_x, d_y) = \begin{bmatrix} 1 & 0 & d_x \\ 0 & 1 & d_y \\ 0 & 0 & 1 \end{bmatrix}, \qquad
@@ -195,27 +190,26 @@
 		R(\theta) = \begin{bmatrix} \cos\theta & -\sin\theta & 0 \\ \sin\theta & \cos\theta & 0 \\ 0 & 0 & 1 \end{bmatrix}
 		\]
 		<p>
-		<code>rotate</code> receives degrees, so it converts to radians before calling <code>cos</code> and <code>sin</code>. The
-		rotation is counter-clockwise in the usual mathematical convention. Because screen and SVG coordinates have \(y\) pointing
-		down, a positive angle appears clockwise on screen, which matches the SVG spec.
+		<code>rotate</code> takes degrees, so I convert to radians before calling <code>cos</code> and <code>sin</code>. The
+		rotation is counter-clockwise in the usual math convention. Since screen and SVG coordinates have \(y\) pointing down, a
+		positive angle looks clockwise on screen, which matches the SVG spec.
 		</p>
 		<p>
-		Nested <code>&lt;g transform="..."&gt;</code> groups compose by multiplying their matrices outer to inner, so the transform
-		listed last in the nesting is applied to the geometry first. With these three functions in place,
-		<code>svg/transforms/robot.svg</code> renders identically to the reference image.
+		Nested <code>&lt;g transform="..."&gt;</code> groups combine by multiplying their matrices from outer to inner, so the
+		innermost transform is applied to the shape first. With these 3 functions done, <code>svg/transforms/robot.svg</code> renders
+		exactly like the reference image.
 		</p>
 
 		<h3>My robot: a wave</h3>
 		<p>
 		I posed cubeman waving with his right arm. The original arms are rectangles centered on their own midpoints, so rotating
-		them in place would spin each segment about its middle rather than about a joint. To get a proper joint, each segment uses the
-		pattern <i>translate to the pivot, rotate, then translate the segment outward along the rotated axis</i>. The upper arm is
-		wrapped in <code>translate(50 -40)</code> to reach the shoulder, then <code>rotate(-60)</code> to swing it up, then
-		<code>translate(40 0)</code> so the rectangle extends away from the shoulder instead of straddling it. The forearm sits inside
-		that same rotated frame: it moves out to the elbow with <code>translate(90 0)</code>, bends a further
-		<code>rotate(-50)</code>, and is pushed out with <code>translate(35 0)</code>. Because the elbow group is nested inside the
-		shoulder group, changing only the shoulder angle moves the whole arm as a unit, which is what makes the hierarchy useful for
-		animation. Sweeping the shoulder angle back and forth over time would produce a waving motion.
+		them in place would just spin each piece around its middle instead of around a joint. To get a proper joint, each piece uses
+		the same pattern: translate to the pivot, rotate, then translate the piece outward. The upper arm is wrapped in
+		<code>translate(50 -40)</code> to get to the shoulder, then <code>rotate(-60)</code> to swing it up, then
+		<code>translate(40 0)</code> so the rectangle extends away from the shoulder. The forearm sits inside that same rotated group.
+		It moves out to the elbow with <code>translate(90 0)</code>, bends another <code>rotate(-50)</code>, and is pushed out with
+		<code>translate(35 0)</code>. Since the elbow group is nested inside the shoulder group, changing just the shoulder angle moves
+		the whole arm together. Sweeping the shoulder angle back and forth over time would make him wave.
 		</p>
 		<figure>
 			<img src="assets/task3_my_robot.png" style="width:60%"/>
@@ -229,20 +223,20 @@
 
 		<h3>What barycentric coordinates are</h3>
 		<p>
-		Barycentric coordinates describe a point \(P\) inside a triangle as a weighted average of the three vertices:
+		Barycentric coordinates describe a point \(P\) inside a triangle as a weighted average of the 3 vertices:
 		\[ P = \alpha P_0 + \beta P_1 + \gamma P_2, \qquad \alpha + \beta + \gamma = 1. \]
-		Each weight measures how close \(P\) is to one vertex. At \(P_0\) the coordinates are \((1, 0, 0)\), at the midpoint of the
-		edge \(P_1 P_2\) they are \((0, \tfrac12, \tfrac12)\), and at the centroid they are \((\tfrac13, \tfrac13, \tfrac13)\). Inside the
-		triangle all three weights lie in \([0, 1]\), and a point is outside exactly when one of them goes negative. Geometrically,
-		\(\alpha\) is the area of the sub-triangle \(P P_1 P_2\) divided by the area of the whole triangle, and similarly for the others.
+		Each weight measures how close \(P\) is to one vertex. At \(P_0\) the coordinates are \((1, 0, 0)\), at the midpoint of
+		edge \(P_1 P_2\) they are \((0, \tfrac12, \tfrac12)\), and at the center they are \((\tfrac13, \tfrac13, \tfrac13)\). Inside the
+		triangle all 3 weights are in \([0, 1]\), and a point is outside when one of them goes negative. Geometrically,
+		\(\alpha\) is the area of the small triangle \(P P_1 P_2\) divided by the area of the whole triangle, and the same goes for
+		the others.
 		</p>
 		<p>
-		The reason they matter is that once you have \((\alpha, \beta, \gamma)\) for a sample, you can interpolate <i>any</i>
-		per-vertex quantity with the same weights. For colors,
+		They are useful because once I have \((\alpha, \beta, \gamma)\) for a sample, I can interpolate any per-vertex value with the
+		same weights. For colors,
 		\[ C(P) = \alpha C_0 + \beta C_1 + \gamma C_2. \]
-		The triangle below has a red, a green, and a blue vertex. Every interior pixel is the blend given by its barycentric weights,
-		so the color shifts smoothly from pure red at the top toward green and blue at the bottom corners, and the center is a muddy
-		mix of all three.
+		The triangle below has a red, a green, and a blue vertex. Every pixel inside is a blend based on its barycentric weights,
+		so the color shifts smoothly from red at the top to green and blue at the bottom corners, and the center is a mix of all 3.
 		</p>
 		<figure>
 			<img src="assets/task4_rgb_triangle.png" style="width:45%"/>
@@ -251,15 +245,15 @@
 
 		<h3>Implementation</h3>
 		<p>
-		The three edge functions from Task 1 are already proportional to the barycentric coordinates. The edge function for edge
-		\(P_1 P_2\) is zero along that edge and grows linearly toward \(P_0\), which is exactly the behavior of \(\alpha\). So inside
+		The 3 edge functions from Task 1 are already proportional to the barycentric coordinates. The edge function for edge
+		\(P_1 P_2\) is 0 along that edge and grows linearly toward \(P_0\), which is exactly how \(\alpha\) behaves. So inside
 		the sampling loop, for each sample that passes the inside test I compute
 		\[ \alpha = \frac{E_{12}}{E_{01} + E_{12} + E_{20}}, \qquad \beta = \frac{E_{20}}{E_{01} + E_{12} + E_{20}}, \qquad
 		\gamma = \frac{E_{01}}{E_{01} + E_{12} + E_{20}}, \]
-		where each weight uses the edge <i>opposite</i> its vertex. The denominator is twice the signed area of the triangle. Because
-		the numerator and denominator flip sign together for a clockwise triangle, the ratios are correct for either winding order.
-		The interpolated color \(\alpha C_0 + \beta C_1 + \gamma C_2\) is then written into the sample buffer at the same slot the
-		single-color rasterizer would have used, so supersampling from Task 2 works unchanged.
+		where each weight uses the edge opposite its vertex. The denominator is twice the signed area of the triangle. For a clockwise
+		triangle the numerator and denominator flip sign together, so the ratios are correct for either winding order. The
+		interpolated color \(\alpha C_0 + \beta C_1 + \gamma C_2\) is then written into the sample buffer at the same slot the
+		single-color rasterizer would use, so supersampling from Task 2 still works with no changes.
 		</p>
 
 		<h3>Result</h3>
@@ -267,8 +261,8 @@
 			<img src="assets/task4_test7.png" style="width:60%"/>
 			<figcaption>
 				<code>svg/basic/test7.svg</code> with default settings at sample rate 1. The wheel is made of 96 thin triangles that
-				share a black center vertex, with rim vertices stepping around the hue circle. Interpolation across each wedge produces the
-				smooth gradient, and neighboring wedges agree along their shared edges so no seams are visible.
+				share a black center vertex, with the outer vertices stepping around the color wheel. Interpolating across each wedge
+				gives the smooth gradient, and neighboring wedges match along their shared edges so no seams show.
 			</figcaption>
 		</figure>
 
@@ -278,34 +272,34 @@
 		<p>
 		A textured triangle stores a texture coordinate \((u, v) \in [0,1]^2\) at each vertex instead of a color. For every sample
 		inside the triangle I interpolate \((u, v)\) with the same barycentric weights as Task 4, which gives a continuous position in
-		the texture image. That position almost never lands exactly on a texel center, so "pixel sampling" is the rule for turning a
-		continuous texture position into one color. I implemented two rules, selected with the <code>P</code> key.
+		the texture image. That position almost never lands exactly on a texel center, so pixel sampling is the rule for turning that
+		position into one color. I implemented 2 rules, which can be toggled with the <code>P</code> key.
 		</p>
 		<p>
 		<b>Nearest</b> scales \(u\) by the texture width and \(v\) by the height, floors both to get the texel that contains the
-		point, clamps the indices to the image, and returns that texel unchanged. It is one memory read per sample.
+		point, clamps the indices to the image, and returns that texel. It is 1 memory read per sample.
 		</p>
 		<p>
-		<b>Bilinear</b> treats texel centers as sitting at half-integer positions, so it subtracts 0.5 from the scaled coordinates,
-		floors to find the top-left texel of the surrounding \(2 \times 2\) block, and keeps the fractional parts \(s\) and \(t\) as
-		blend weights. It reads the four neighboring texels, linearly interpolates the top pair and the bottom pair by \(s\), then
-		interpolates those two results by \(t\). Four reads and three lerps per sample.
+		<b>Bilinear</b> treats texel centers as sitting at half-integer positions, so it subtracts 0.5 from the scaled coordinates.
+		It floors to find the top-left texel of the surrounding \(2 \times 2\) block and keeps the fractional parts \(s\) and \(t\) as
+		blend weights. It reads the 4 neighboring texels, lerps the top pair and the bottom pair by \(s\), then lerps those 2 results
+		by \(t\). That is 4 reads and 3 lerps per sample.
 		</p>
 
 		<h3>Implementation</h3>
 		<p>
-		<code>sample_nearest</code> and <code>sample_bilinear</code> live in <code>texture.cpp</code> and operate on a given
-		<code>MipLevel</code> via its <code>get_texel</code> helper. Both clamp every texel index into the valid range so that
-		\(u = 1\) or slight barycentric drift outside \([0,1]\) cannot read past the end of the texel array.
+		<code>sample_nearest</code> and <code>sample_bilinear</code> are in <code>texture.cpp</code> and work on a given
+		<code>MipLevel</code> using its <code>get_texel</code> helper. Both clamp every texel index to the valid range, so
+		\(u = 1\) or a small barycentric error outside \([0,1]\) cannot read past the end of the texel array.
 		<code>rasterize_textured_triangle</code> reuses the supersampled loop from Task 2, interpolates \(u\) and \(v\), fills a
 		<code>SampleParams</code> struct with the coordinate and the current pixel and level sampling modes, and calls
-		<code>Texture::sample</code>, which for this task dispatches to the chosen sampler at mip level 0.
+		<code>Texture::sample</code>. For this task, <code>Texture::sample</code> just calls the chosen sampler at mip level 0.
 		</p>
 
 		<h3>Results</h3>
 		<p>
-		All four images are <code>svg/texmap/test5.svg</code>, the Berkeley seal warped through a spiral. The seal texture is only
-		260 x 260 texels stretched across the canvas, so texels are magnified on screen and the sampling method is easy to see. The
+		All 4 images are <code>svg/texmap/test5.svg</code>, the Berkeley seal warped into a spiral. The seal texture is only
+		260 x 260 texels stretched across the canvas, so the texels are magnified on screen and the sampling method is easy to see. The
 		pixel inspector is over the same white letter edge in every shot.
 		</p>
 		<div style="display: flex; flex-direction: column; align-items: center;">
@@ -333,91 +327,91 @@
 			</table>
 		</div>
 		<p>
-		With nearest sampling at 1 sample per pixel, the edge of the letter is a hard staircase: each screen pixel copies exactly one
-		texel, so the magnified texel grid is visible and the boundary jumps between pure white and pure blue. Supersampling to 16
-		softens the staircase by averaging screen samples that straddle a texel boundary, but the underlying blocks are still there
-		because every one of those 16 samples is itself a hard nearest lookup. Bilinear at 1 sample per pixel already looks smoother
-		than nearest at 16, because the blend happens in texture space: each pixel is a weighted mix of the four texels around it, so
-		the transition across the letter edge is a gradient several pixels wide instead of a step. Bilinear at 16 is the smoothest of
-		the four, though the improvement over bilinear at 1 is small here.
+		With nearest sampling at 1 sample per pixel, the edge of the letter is a hard staircase. Each screen pixel copies exactly 1
+		texel, so the magnified texel grid is visible and the edge jumps between white and blue. Supersampling at 16 softens the
+		staircase by averaging the screen samples that are at a texel boundary, but the blocks are still there because each of those
+		16 samples is still a nearest lookup. Bilinear at 1 sample per pixel already looks smoother than nearest at 16, because the
+		blending happens in the texture itself. Each pixel is a weighted mix of the 4 texels around it, so the letter edge becomes a
+		gradient a few pixels wide instead of a hard step. Bilinear at 16 is the smoothest of the 4, but the improvement over
+		bilinear at 1 is small here.
 		</p>
 
 		<h3>When the difference is large</h3>
 		<p>
-		Bilinear beats nearest most clearly when the texture is <i>magnified</i>, that is, when one texel covers many screen pixels.
-		Nearest then paints each texel as a flat block and the image looks pixelated, while bilinear reconstructs a smooth surface
-		between texel centers. It also helps when the texture is slowly moving or rotating relative to the pixel grid, since nearest
-		lookups snap and shimmer as the boundary between two texels crosses pixel centers, whereas bilinear changes continuously.
-		The two methods look nearly identical when the texture is displayed close to its native resolution, and neither fixes the
-		opposite problem of <i>minification</i>, where many texels fall inside one pixel. Both only look at one or four texels per
-		sample, so a minified high-frequency texture still aliases. That case is what mipmapping in Task 6 addresses. The cost of
-		bilinear is four texel reads and three interpolations instead of one read, which is a noticeable but not dominant slowdown on
-		a software rasterizer.
+		Bilinear beats nearest the most when the texture is magnified, meaning 1 texel covers many screen pixels. Nearest paints
+		each texel as a flat block so the image looks pixelated, while bilinear gives a smooth blend between texel centers. It also
+		helps when the texture is slowly moving or rotating, since nearest lookups snap and shimmer as texel boundaries cross pixel
+		centers, while bilinear changes smoothly. The 2 methods look almost the same when the texture is shown close to its original
+		resolution. Neither one fixes the opposite problem of minification, where many texels fall inside 1 pixel. Both only look at
+		1 or 4 texels per sample, so a minified detailed texture still aliases. That case is what mipmapping in Task 6 fixes. The cost
+		of bilinear is 4 texel reads and 3 lerps instead of 1 read, which is slower but not by a huge amount on a software
+		rasterizer.
 		</p>
 
 		<h2>Task 6: "Level Sampling" with mipmaps for texture mapping</h2>
 
 		<h3>What level sampling is</h3>
 		<p>
-		Pixel sampling from Task 5 reads at most four texels per sample no matter how large the texture is. When a texture is
-		<i>minified</i>, meaning many texels project into a single screen pixel, those four texels are an arbitrary subset of what the
-		pixel actually covers, so the result sparkles and forms moiré patterns. A mipmap fixes this by precomputing a pyramid of
-		downsampled copies of the texture: level 0 is full resolution, level 1 is half the size in each dimension, level 2 a quarter,
-		and so on, each one a box-filtered version of the one before. Level sampling is the rule for choosing which level to read from,
-		so that one texel at the chosen level covers roughly one screen pixel. The <code>L</code> key cycles the three modes.
+		Pixel sampling from Task 5 reads at most 4 texels per sample no matter how big the texture is. When a texture is minified,
+		meaning many texels land in a single screen pixel, those 4 texels are just a random subset of what the pixel actually covers,
+		so the result sparkles and forms moiré patterns. A mipmap fixes this by storing a pyramid of smaller copies of the texture.
+		Level 0 is full resolution, level 1 is half the size in each dimension, level 2 is a quarter, and so on, where each level is an
+		averaged version of the one before. Level sampling is the rule for picking which level to read from, so that 1 texel at the
+		chosen level covers about 1 screen pixel. The <code>L</code> key cycles through the 3 modes.
 		</p>
 		<p>
-		The right level depends on how fast the texture coordinate changes across the screen. If stepping one pixel to the right moves
-		\((u, v)\) by \(2^k\) texels, then level \(k\) is the one whose texels have been pre-averaged over that footprint. So
+		The right level depends on how fast the texture coordinate changes across the screen. If moving 1 pixel to the right moves
+		\((u, v)\) by \(2^k\) texels, then level \(k\) is the one whose texels are already averaged over that area. So
 		\[ D = \log_2 \max\!\left( \left\| \frac{\partial (u,v)}{\partial x} \right\|,\ \left\| \frac{\partial (u,v)}{\partial y} \right\| \right), \]
-		with the derivatives measured in texels, that is, scaled by the full-resolution texture width and height. \(D\) is a continuous
-		number and can be negative when the texture is magnified; negative values clamp to level 0 since there is nothing finer.
+		where the derivatives are measured in texels, meaning they are scaled by the full-resolution texture width and height. \(D\) is
+		a continuous number and can be negative when the texture is magnified. Negative values clamp to level 0 since there is no
+		finer level.
 		</p>
 
 		<h3>Implementation</h3>
 		<p>
-		In <code>rasterize_textured_triangle</code>, for each covered sample I compute barycentric coordinates not only at the sample
-		point but also at the points one full pixel to the right and one full pixel down, interpolate \((u, v)\) at all three, and
-		store them in the <code>SampleParams</code> fields <code>p_uv</code>, <code>p_dx_uv</code>, and <code>p_dy_uv</code>. The
-		neighbor points are not tested for triangle coverage, since only the rate of change matters.
+		In <code>rasterize_textured_triangle</code>, for each covered sample I compute barycentric coordinates at the sample point,
+		and also at the points 1 full pixel to the right and 1 full pixel down. I interpolate \((u, v)\) at all 3 and store them in
+		the <code>SampleParams</code> fields <code>p_uv</code>, <code>p_dx_uv</code>, and <code>p_dy_uv</code>. The neighbor points
+		are not tested for being inside the triangle, since only the rate of change matters.
 		</p>
 		<p>
-		<code>Texture::get_level</code> subtracts <code>p_uv</code> from each neighbor to get the two difference vectors, scales their
-		\(x\) components by the texture width and \(y\) components by the height, takes the larger of the two lengths, and returns its
-		\(\log_2\), or 0 if that would be negative or undefined.
+		<code>Texture::get_level</code> subtracts <code>p_uv</code> from each neighbor to get the 2 difference vectors, scales their
+		\(x\) components by the texture width and \(y\) components by the height, takes the longer of the 2 lengths, and returns its
+		\(\log_2\). It returns 0 if that would be negative or undefined.
 		</p>
 		<p>
-		<code>Texture::sample</code> then branches on the level mode. <b>L_ZERO</b> always uses level 0, as in Task 5.
+		<code>Texture::sample</code> then branches on the level mode. <b>L_ZERO</b> always uses level 0, same as Task 5.
 		<b>L_NEAREST</b> rounds \(D\) to the nearest integer, clamps it to the valid range of mip levels, and passes it to the
-		pixel sampler chosen by <code>psm</code>. <b>L_LINEAR</b> clamps \(D\) as a float, floors it to get the lower level, takes the
-		next level up as the upper, samples both with the chosen pixel sampler, and blends them by the fractional part of \(D\). With
-		<code>P_LINEAR</code> this is trilinear filtering. The pixel and level choices are independent, so all six combinations work.
+		pixel sampler chosen by <code>psm</code>. <b>L_LINEAR</b> clamps \(D\) as a float, floors it to get the lower level, and uses
+		the next level up as the upper level. It samples both with the chosen pixel sampler and blends them by the fractional part of
+		\(D\). With <code>P_LINEAR</code> this is trilinear filtering. The pixel and level choices are independent, so all 6
+		combinations work.
 		</p>
 
 		<h3>Tradeoffs</h3>
 		<ul>
 			<li><b>Speed.</b> Per sample, nearest pixel costs 1 texel read and bilinear costs 4. Level sampling adds the
-			<code>get_level</code> computation, which is two extra barycentric evaluations and a logarithm, plus nothing more for
-			L_NEAREST but a second full pixel sample for L_LINEAR. Trilinear is therefore 8 reads and 7 lerps per sample, roughly
-			8 times the memory traffic of the cheapest option. In practice the mip levels are small and cache well, so minified textures
-			can actually render <i>faster</i> with mipmapping than without, because level 0 reads scattered across a large image are
-			replaced by reads that stay within a small one.</li>
-			<li><b>Memory.</b> A mipmap stores the full texture plus levels of \(\tfrac14, \tfrac1{16}, \ldots\) of its size, which
-			sums to \(\tfrac43\) of the original. The extra third is paid once at load time, not per frame.</li>
-			<li><b>Antialiasing power.</b> Pixel sampling only helps with magnification. Supersampling helps with everything but at
-			\(N\) times the cost for \(N\) samples. Level sampling targets minification directly: by reading a level whose texels already
-			average the pixel's footprint, one sample at the right level does what many supersamples would do, for close to constant
-			cost. L_NEAREST can show a visible seam where the rounded level changes; L_LINEAR blends across that boundary at the cost
-			of the second sample.</li>
+			<code>get_level</code> computation, which is 2 extra barycentric evaluations and a log. L_NEAREST adds nothing else, but
+			L_LINEAR needs a second full pixel sample. So trilinear is 8 reads and 7 lerps per sample, about 8 times the memory reads
+			of the cheapest option. In practice the mip levels are small and cache well, so minified textures can actually render faster
+			with mipmapping, because scattered reads across a big level 0 image are replaced by reads that stay inside a small one.</li>
+			<li><b>Memory.</b> A mipmap stores the full texture plus levels that are \(\tfrac14, \tfrac1{16}, \ldots\) of its size,
+			which adds up to \(\tfrac43\) of the original. The extra third is paid once at load time, not every frame.</li>
+			<li><b>Antialiasing power.</b> Pixel sampling only helps with magnification. Supersampling helps with everything, but costs
+			\(N\) times more for \(N\) samples. Level sampling goes after minification directly. By reading a level whose texels already
+			average the area of the pixel, 1 sample at the right level does what many supersamples would do, for almost constant cost.
+			L_NEAREST can show a visible seam where the rounded level changes, and L_LINEAR blends across that seam at the cost of the
+			second sample.</li>
 		</ul>
 
 		<h3>Results</h3>
 		<p>
-		To make the effect obvious I generated a 1024 x 1024 test texture, <code>img/pattern.png</code>, whose left half is a
-		checkerboard of single texels with a coarse red grid every 128 texels, and whose right half is a set of concentric rings and
-		radial spokes with a two-texel period. It is mapped through the same warped mesh as <code>texmap/test6.svg</code>. At the
-		default view the texture is minified by roughly two to four times over most of the surface, and magnified in a small region
-		near the lower left. All four images are at 1 sample per pixel so that only the texture filtering changes.
+		To make the effect obvious I generated a 1024 x 1024 test texture, <code>img/pattern.png</code>. The left half is a
+		checkerboard of single texels with a thick red grid every 128 texels, and the right half is a set of rings and spokes with a
+		2 texel period. It is mapped through the same warped mesh as <code>texmap/test6.svg</code>. At the default view the texture is
+		minified by about 2 to 4 times over most of the surface, and magnified in a small region near the lower left. All 4 images
+		are at 1 sample per pixel so that only the texture filtering changes.
 		</p>
 		<div style="display: flex; flex-direction: column; align-items: center;">
 			<table style="width: 100%; text-align: center; border-collapse: collapse;">
@@ -444,20 +438,17 @@
 			</table>
 		</div>
 		<p>
-		At level zero the single-texel checkerboard is far above the pixel sampling rate, so both pixel modes produce swirling moiré:
-		nearest picks essentially random texels and bilinear only averages four of the many texels under each pixel, which is not
-		enough. Switching to nearest level selects mip level 1 or 2 across most of the surface, where the checkerboard has already been
-		box-filtered to a uniform gray. The moiré vanishes and the red grid, which is wide enough to survive several levels of
-		downsampling, stays sharp. In the L_NEAREST, P_NEAREST image a patch in the lower left remains noisy. That is the one region
-		where the mesh magnifies the texture, so \(D\) rounds to 0 and level 0 is correctly chosen, and a nearest lookup into a
-		single-texel checkerboard is still hit-or-miss. In the L_NEAREST, P_LINEAR image the same patch is smooth, because bilinear
-		filtering handles the magnified case that mipmapping does not. The two techniques are complementary: level sampling fixes
-		minification, pixel sampling fixes magnification, and only the combination is clean everywhere. Bilinear alone at level zero,
-		in the top right image, softens the moiré but leaves large ring-shaped artifacts, since four texels are still far fewer than
-		the pixel's true footprint.
+		At level 0 the single-texel checkerboard is much finer than the pixel grid, so both pixel modes produce swirling moiré.
+		Nearest picks basically random texels, and bilinear only averages 4 of the many texels under each pixel, which is not enough.
+		Switching to nearest level picks mip level 1 or 2 across most of the surface, where the checkerboard has already been averaged
+		into a flat gray. The moiré disappears and the red grid stays sharp, since it is thick enough to survive a few levels of
+		downsampling. In the L_NEAREST, P_NEAREST image a patch in the lower left is still noisy. That is the one region where the
+		mesh magnifies the texture, so \(D\) rounds to 0 and level 0 is correctly used, and a nearest lookup into a single-texel
+		checkerboard is still hit or miss. In the L_NEAREST, P_LINEAR image the same patch is smooth, because bilinear handles the
+		magnified case that mipmapping does not. So the 2 techniques work together: level sampling fixes minification, pixel sampling
+		fixes magnification, and only using both is clean everywhere. Bilinear on its own at level 0, in the top right image, softens
+		the moiré but leaves big ring-shaped artifacts, since 4 texels are still far fewer than what the pixel really covers.
 		</p>
-
-		<h2>(Optional) Task 7: Extra Credit - Draw Something Creative!</h2>
 
 		</div>
 	</body>
